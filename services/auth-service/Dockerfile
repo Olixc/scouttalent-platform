@@ -7,7 +7,7 @@ WORKDIR /app
 COPY pkg ./pkg
 
 # Copy service-specific files
-COPY services/auth-service/go.mod services/auth-service/go.sum ./
+COPY services/auth-service/go.mod ./
 COPY services/auth-service ./
 
 # Download dependencies
