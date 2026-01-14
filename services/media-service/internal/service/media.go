@@ -6,187 +6,201 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/nats-io/nats.go"
-	"github.com/scouttalent/media-service/internal/model"
-	"github.com/scouttalent/media-service/internal/repository"
-	"github.com/scouttalent/media-service/internal/storage"
-	"go.uber.org/zap"
+	"github.com/scouttalent/services/media-service/internal/model"
+	"github.com/scouttalent/services/media-service/internal/repository"
+	"github.com/scouttalent/services/media-service/internal/storage"
 )
 
 type MediaService struct {
-	repo       *repository.MediaRepository
-	blobClient *storage.AzureBlobClient
-	nats       *nats.Conn
-	logger     *zap.Logger
+	repo    *repository.MediaRepository
+	storage *storage.BlobStorage
 }
 
-func NewMediaService(repo *repository.MediaRepository, blobClient *storage.AzureBlobClient, nc *nats.Conn, logger *zap.Logger) *MediaService {
+func NewMediaService(repo *repository.MediaRepository, storage *storage.BlobStorage) *MediaService {
 	return &MediaService{
-		repo:       repo,
-		blobClient: blobClient,
-		nats:       nc,
-		logger:     logger,
+		repo:    repo,
+		storage: storage,
 	}
 }
 
-func (s *MediaService) InitiateUpload(ctx context.Context, profileID uuid.UUID, req *model.CreateVideoRequest) (*model.Video, *model.Upload, error) {
+// InitiateUpload creates a new video record and returns upload URL
+func (s *MediaService) InitiateUpload(ctx context.Context, req *model.VideoUploadRequest) (*model.VideoUploadResponse, error) {
 	// Create video record
 	video := &model.Video{
-		ID:          uuid.New(),
-		ProfileID:   profileID,
+		ID:          uuid.New().String(),
+		ProfileID:   req.ProfileID,
 		Title:       req.Title,
 		Description: req.Description,
+		FileName:    req.FileName,
 		FileSize:    req.FileSize,
 		MimeType:    req.MimeType,
-		Status:      model.VideoStatusUploading,
+		Status:      model.VideoStatusPending,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
 
-	// Generate blob URL
-	blobName := fmt.Sprintf("%s/%s", profileID.String(), video.ID.String())
-	video.BlobURL = s.blobClient.GetBlobURL(blobName)
-
-	// Save video to database
 	if err := s.repo.CreateVideo(ctx, video); err != nil {
-		return nil, nil, fmt.Errorf("failed to create video: %w", err)
+		return nil, fmt.Errorf("failed to create video: %w", err)
 	}
 
 	// Create upload record
-	upload := &model.Upload{
-		ID:        uuid.New(),
+	upload := &model.VideoUpload{
+		ID:        uuid.New().String(),
 		VideoID:   video.ID,
-		UploadID:  uuid.New().String(), // TUS upload ID
-		Status:    model.VideoStatusUploading,
+		Status:    model.UploadStatusInitiated,
 		Progress:  0,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
 
 	if err := s.repo.CreateUpload(ctx, upload); err != nil {
-		return nil, nil, fmt.Errorf("failed to create upload: %w", err)
+		return nil, fmt.Errorf("failed to create upload: %w", err)
 	}
 
-	s.logger.Info("upload initiated",
-		zap.String("video_id", video.ID.String()),
-		zap.String("upload_id", upload.ID.String()),
-	)
+	// Generate upload URL
+	uploadURL, err := s.storage.GenerateUploadURL(ctx, video.ID, req.FileName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate upload URL: %w", err)
+	}
 
-	return video, upload, nil
+	// Check if we're in test mode
+	testMode := s.storage.IsTestMode()
+
+	return &model.VideoUploadResponse{
+		VideoID:   video.ID,
+		UploadID:  upload.ID,
+		UploadURL: uploadURL,
+		ExpiresAt: time.Now().Add(1 * time.Hour),
+		TestMode:  testMode,
+	}, nil
 }
 
-func (s *MediaService) UpdateUploadProgress(ctx context.Context, uploadID uuid.UUID, progress int) error {
-	status := model.VideoStatusUploading
+// UpdateUploadProgress updates the upload progress
+func (s *MediaService) UpdateUploadProgress(ctx context.Context, uploadID string, progress int) error {
+	upload, err := s.repo.GetUploadByID(ctx, uploadID)
+	if err != nil {
+		return fmt.Errorf("failed to get upload: %w", err)
+	}
+
+	upload.Progress = progress
+	upload.UpdatedAt = time.Now()
+
 	if progress >= 100 {
-		status = model.VideoStatusProcessing
+		upload.Status = model.UploadStatusCompleted
+		upload.CompletedAt = &upload.UpdatedAt
+	} else {
+		upload.Status = model.UploadStatusInProgress
 	}
 
-	if err := s.repo.UpdateUploadProgress(ctx, uploadID, progress, status); err != nil {
-		return fmt.Errorf("failed to update upload progress: %w", err)
-	}
-
-	return nil
+	return s.repo.UpdateUpload(ctx, upload)
 }
 
-func (s *MediaService) CompleteUpload(ctx context.Context, videoID uuid.UUID) error {
+// CompleteUpload marks the upload as complete and updates video status
+func (s *MediaService) CompleteUpload(ctx context.Context, videoID string) error {
 	video, err := s.repo.GetVideoByID(ctx, videoID)
 	if err != nil {
 		return fmt.Errorf("failed to get video: %w", err)
 	}
 
-	// Update video status
-	video.Status = model.VideoStatusReady
+	// Generate blob URL
+	video.BlobURL = s.storage.GetBlobURL(videoID, video.FileName)
+	video.Status = model.VideoStatusProcessing
 	video.UpdatedAt = time.Now()
 
 	if err := s.repo.UpdateVideo(ctx, video); err != nil {
 		return fmt.Errorf("failed to update video: %w", err)
 	}
 
-	// Publish video uploaded event to NATS
-	if err := s.publishVideoUploadedEvent(video); err != nil {
-		s.logger.Error("failed to publish video uploaded event", zap.Error(err))
+	// In test mode, immediately mark as ready since we're not actually processing
+	if s.storage.IsTestMode() {
+		video.Status = model.VideoStatusReady
+		video.UpdatedAt = time.Now()
+		if err := s.repo.UpdateVideo(ctx, video); err != nil {
+			return fmt.Errorf("failed to update video status: %w", err)
+		}
 	}
 
-	s.logger.Info("upload completed", zap.String("video_id", videoID.String()))
+	// TODO: Publish event to NATS for AI moderation
+	// For now, we'll skip this in test mode
 
 	return nil
 }
 
-func (s *MediaService) GetVideo(ctx context.Context, videoID uuid.UUID) (*model.Video, error) {
-	return s.repo.GetVideoByID(ctx, videoID)
-}
-
-func (s *MediaService) ListProfileVideos(ctx context.Context, profileID uuid.UUID, limit, offset int) ([]model.Video, int, error) {
-	videos, err := s.repo.GetVideosByProfileID(ctx, profileID, limit, offset)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to get videos: %w", err)
-	}
-
-	total, err := s.repo.CountVideosByProfileID(ctx, profileID)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to count videos: %w", err)
-	}
-
-	return videos, total, nil
-}
-
-func (s *MediaService) UpdateVideo(ctx context.Context, videoID uuid.UUID, req *model.UpdateVideoRequest) (*model.Video, error) {
+// GetVideo retrieves a video by ID
+func (s *MediaService) GetVideo(ctx context.Context, videoID string) (*model.Video, error) {
 	video, err := s.repo.GetVideoByID(ctx, videoID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get video: %w", err)
 	}
 
-	// Update fields
-	if req.Title != nil {
-		video.Title = *req.Title
-	}
-	if req.Description != nil {
-		video.Description = *req.Description
-	}
-	video.UpdatedAt = time.Now()
-
-	if err := s.repo.UpdateVideo(ctx, video); err != nil {
-		return nil, fmt.Errorf("failed to update video: %w", err)
+	// Generate download URL if video is ready
+	if video.Status == model.VideoStatusReady && video.BlobURL != "" {
+		downloadURL, err := s.storage.GenerateDownloadURL(ctx, video.ID, video.FileName)
+		if err == nil {
+			video.StreamURL = downloadURL
+		}
 	}
 
 	return video, nil
 }
 
-func (s *MediaService) DeleteVideo(ctx context.Context, videoID uuid.UUID) error {
+// ListProfileVideos retrieves all videos for a profile
+func (s *MediaService) ListProfileVideos(ctx context.Context, profileID string, limit, offset int) ([]*model.Video, int, error) {
+	videos, total, err := s.repo.ListVideosByProfile(ctx, profileID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list videos: %w", err)
+	}
+
+	// Generate download URLs for ready videos
+	for _, video := range videos {
+		if video.Status == model.VideoStatusReady && video.BlobURL != "" {
+			downloadURL, err := s.storage.GenerateDownloadURL(ctx, video.ID, video.FileName)
+			if err == nil {
+				video.StreamURL = downloadURL
+			}
+		}
+	}
+
+	return videos, total, nil
+}
+
+// UpdateVideo updates video metadata
+func (s *MediaService) UpdateVideo(ctx context.Context, videoID string, req *model.VideoUpdateRequest) error {
 	video, err := s.repo.GetVideoByID(ctx, videoID)
 	if err != nil {
 		return fmt.Errorf("failed to get video: %w", err)
 	}
 
-	// Delete from blob storage
-	blobName := fmt.Sprintf("%s/%s", video.ProfileID.String(), video.ID.String())
-	if err := s.blobClient.DeleteBlob(ctx, blobName); err != nil {
-		s.logger.Error("failed to delete blob", zap.Error(err))
+	if req.Title != "" {
+		video.Title = req.Title
+	}
+	if req.Description != "" {
+		video.Description = req.Description
+	}
+	if req.Visibility != "" {
+		video.Visibility = req.Visibility
+	}
+
+	video.UpdatedAt = time.Now()
+
+	return s.repo.UpdateVideo(ctx, video)
+}
+
+// DeleteVideo deletes a video and its blob
+func (s *MediaService) DeleteVideo(ctx context.Context, videoID string) error {
+	video, err := s.repo.GetVideoByID(ctx, videoID)
+	if err != nil {
+		return fmt.Errorf("failed to get video: %w", err)
+	}
+
+	// Delete from blob storage (will be no-op in test mode)
+	if err := s.storage.DeleteVideo(ctx, video.ID, video.FileName); err != nil {
+		return fmt.Errorf("failed to delete blob: %w", err)
 	}
 
 	// Delete from database
 	if err := s.repo.DeleteVideo(ctx, videoID); err != nil {
 		return fmt.Errorf("failed to delete video: %w", err)
-	}
-
-	s.logger.Info("video deleted", zap.String("video_id", videoID.String()))
-
-	return nil
-}
-
-func (s *MediaService) publishVideoUploadedEvent(video *model.Video) error {
-	event := map[string]interface{}{
-		"event_type": "video.uploaded",
-		"video_id":   video.ID.String(),
-		"profile_id": video.ProfileID.String(),
-		"title":      video.Title,
-		"timestamp":  time.Now().Unix(),
-	}
-
-	// Publish to NATS subject
-	subject := "media.video.uploaded"
-	if err := s.nats.Publish(subject, []byte(fmt.Sprintf("%v", event))); err != nil {
-		return err
 	}
 
 	return nil
