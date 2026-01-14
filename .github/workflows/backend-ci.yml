@@ -55,34 +55,27 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.23'
-      
-      - name: Cache Go modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+          cache-dependency-path: |
+            backend/pkg/go.sum
+            backend/services/*/go.sum
       
       - name: Install dependencies
         working-directory: backend
         run: |
-          cd pkg && go mod download
-          cd ../services/auth-service && go mod download
-          cd ../profile-service && go mod download
-          cd ../media-service && go mod download
-          cd ../ai-moderation-worker && go mod download
-          cd ../discovery-service && go mod download
+          cd pkg && go mod download && cd ..
+          cd services/auth-service && go mod download && cd ../..
+          cd services/profile-service && go mod download && cd ../..
+          cd services/media-service && go mod download && cd ../..
+          cd services/ai-moderation-worker && go mod download && cd ../..
+          cd services/discovery-service && go mod download && cd ../..
       
       - name: Run linters
         working-directory: backend
         run: |
           go install golang.org/x/lint/golint@latest
-          cd services/auth-service && golint ./...
-          cd ../profile-service && golint ./...
-          cd ../media-service && golint ./...
+          golint ./services/auth-service/...
+          golint ./services/profile-service/...
+          golint ./services/media-service/...
       
       - name: Run tests
         working-directory: backend
@@ -92,9 +85,9 @@ jobs:
           NATS_URL: nats://localhost:4222
           JWT_SECRET: test-secret-key
         run: |
-          cd services/auth-service && go test -v -race -coverprofile=coverage.out ./...
-          cd ../profile-service && go test -v -race -coverprofile=coverage.out ./...
-          cd ../media-service && go test -v -race -coverprofile=coverage.out ./...
+          cd services/auth-service && go test -v -race -coverprofile=coverage.out ./... && cd ../..
+          cd services/profile-service && go test -v -race -coverprofile=coverage.out ./... && cd ../..
+          cd services/media-service && go test -v -race -coverprofile=coverage.out ./... && cd ../..
       
       - name: Upload coverage reports
         uses: codecov/codecov-action@v4
