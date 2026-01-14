@@ -1,14 +1,16 @@
 # Build stage
-FROM golang:1.22-alpine AS builder
+FROM golang:1.23-alpine AS builder
 
-WORKDIR /app
+WORKDIR /workspace
 
-# Copy shared packages first
+# Copy pkg directory to match local structure
 COPY pkg ./pkg
 
-# Copy service-specific files
-COPY services/profile-service/go.mod ./
-COPY services/profile-service ./
+# Copy service files to services/profile-service
+COPY services/profile-service ./services/profile-service
+
+# Set working directory to service
+WORKDIR /workspace/services/profile-service
 
 # Download dependencies
 RUN go mod download
@@ -25,7 +27,7 @@ WORKDIR /app
 
 # Copy binary from builder
 COPY --from=builder /app/bin/profile-service .
-COPY --from=builder /app/migrations ./migrations
+COPY --from=builder /workspace/services/profile-service/migrations ./migrations
 
 # Create non-root user
 RUN addgroup -g 1000 appuser && \
