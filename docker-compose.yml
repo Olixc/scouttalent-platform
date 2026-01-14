@@ -1,8 +1,7 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:16-alpine
+    container_name: scouttalent-postgres
     environment:
       POSTGRES_USER: scout
       POSTGRES_PASSWORD: scoutpass
@@ -19,6 +18,7 @@ services:
 
   redis:
     image: redis:8.4-alpine
+    container_name: scouttalent-redis
     ports:
       - "6379:6379"
     volumes:
@@ -31,6 +31,7 @@ services:
 
   nats:
     image: nats:2.10-alpine
+    container_name: scouttalent-nats
     ports:
       - "4222:4222"
       - "8222:8222"
@@ -43,8 +44,9 @@ services:
 
   auth-service:
     build:
-      context: ./services/auth-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/auth-service/Dockerfile
+    container_name: scouttalent-auth
     ports:
       - "8080:8080"
     environment:
@@ -60,8 +62,9 @@ services:
 
   profile-service:
     build:
-      context: ./services/profile-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/profile-service/Dockerfile
+    container_name: scouttalent-profile
     ports:
       - "8081:8081"
     environment:

@@ -3,15 +3,15 @@ FROM golang:1.22-alpine AS builder
 
 WORKDIR /app
 
-# Copy go mod files
-COPY go.mod go.sum ./
-COPY ../../pkg /app/pkg
+# Copy shared packages first
+COPY pkg ./pkg
+
+# Copy service-specific files
+COPY services/profile-service/go.mod services/profile-service/go.sum ./
+COPY services/profile-service ./
 
 # Download dependencies
 RUN go mod download
-
-# Copy source code
-COPY . .
 
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/bin/profile-service ./cmd/server
