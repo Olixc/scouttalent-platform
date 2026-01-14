@@ -10,9 +10,14 @@ import (
 type Claims struct {
 	jwt.RegisteredClaims
 	UserID      string   `json:"sub"`
+	ProfileID   string   `json:"profile_id,omitempty"`
 	Role        string   `json:"role"`
 	TrustLevel  string   `json:"trust_level"`
 	Permissions []string `json:"permissions"`
+}
+
+type JWTConfig struct {
+	Secret string
 }
 
 type TokenConfig struct {

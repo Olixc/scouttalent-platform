@@ -1,321 +1,451 @@
-# Local Testing Guide - ScoutTalent Platform
+# ScoutTalent Platform - Local Testing Guide
 
-This guide will walk you through testing the Auth Service and Profile Service on your local machine.
+This guide provides step-by-step instructions for setting up and testing the ScoutTalent microservices platform locally.
 
 ## Prerequisites
 
-Before starting, ensure you have the following installed:
+- Docker and Docker Compose installed
+- Git installed
+- `curl` or Postman for API testing
+- `golang-migrate` CLI tool (for running migrations)
 
-- **Docker Desktop** (version 20.10+)
-- **Go** (version 1.23+)
-- **Make** (usually pre-installed on macOS/Linux, Windows users can use WSL or install via Chocolatey)
-- **curl** (for API testing)
-- **jq** (optional, for pretty JSON output)
+## Quick Start
 
-Verify installations:
-```bash
-docker --version
-docker-compose --version
-go version
-make --version
-```
-
-## Step 1: Clone the Repository
+### 1. Clone the Repository
 
 ```bash
-git clone git@github.com:Olixc/scouttalent-platform.git
+git clone https://github.com/Olixc/scouttalent-platform.git
 cd scouttalent-platform
 ```
 
-## Step 2: Start Infrastructure Services
+### 2. Start Infrastructure Services
 
-Start PostgreSQL, Redis, and NATS using Docker Compose:
+Start PostgreSQL, Redis, and NATS:
 
 ```bash
-docker-compose up -d
+docker-compose up -d postgres redis nats
 ```
 
-Verify all services are running:
+Wait for services to be healthy (about 30 seconds):
+
 ```bash
 docker-compose ps
 ```
 
-You should see:
-- `postgres` - Running on port 5432
-- `redis` - Running on port 6379
-- `nats` - Running on port 4222
+### 3. Run Database Migrations
 
-**Wait 10-15 seconds** for PostgreSQL to fully initialize before proceeding.
-
-## Step 3: Run Database Migrations
-
-Apply migrations for both services:
+Install golang-migrate if you haven't:
 
 ```bash
-# Auth Service migrations
-make migrate-up-auth
+# macOS
+brew install golang-migrate
 
-# Profile Service migrations
-make migrate-up-profile
+# Linux
+curl -L https://github.com/golang-migrate/migrate/releases/download/v4.16.2/migrate.linux-amd64.tar.gz | tar xvz
+sudo mv migrate /usr/local/bin/
+
+# Windows
+choco install golang-migrate
 ```
 
-Verify migrations succeeded:
-```bash
-# Check Auth Service database
-docker exec -it scouttalent-postgres psql -U postgres -d auth_db -c "\dt"
-
-# Check Profile Service database
-docker exec -it scouttalent-postgres psql -U postgres -d profile_db -c "\dt"
-```
-
-You should see the `users` table in auth_db and `profiles` table in profile_db.
-
-## Step 4: Start the Services
-
-Open **two separate terminal windows** in the project root directory.
-
-**Terminal 1 - Auth Service:**
-```bash
-make dev-auth
-```
-
-You should see:
-```
-2025/01/13 16:00:00 INFO Starting Auth Service server=:8080
-2025/01/13 16:00:00 INFO Connected to database service=auth
-```
-
-**Terminal 2 - Profile Service:**
-```bash
-make dev-profile
-```
-
-You should see:
-```
-2025/01/13 16:00:05 INFO Starting Profile Service server=:8081
-2025/01/13 16:00:05 INFO Connected to database service=profile
-```
-
-## Step 5: Run Automated Tests
-
-Open a **third terminal window** and run the automated test script:
+Run migrations for all services:
 
 ```bash
-bash scripts/test-api.sh
+make migrate-up
 ```
 
-The script will:
-1. ✅ Register a new player
-2. ✅ Login and receive JWT token
-3. ✅ Create a player profile
-4. ✅ Retrieve the profile
-5. ✅ Update the profile
-6. ✅ Test authentication (access protected endpoint)
+Or run individually:
 
-**Expected Output:**
-```
-🚀 ScoutTalent API Testing
-==========================
-
-📝 Step 1: Register a new player
-Email: player1234567890@example.com
-Response: {"id":"...","email":"player...","role":"player","created_at":"..."}
-✅ Registration successful
-
-🔐 Step 2: Login
-Response: {"token":"eyJhbGc...","user":{"id":"...","email":"...","role":"player"}}
-✅ Login successful
-
-👤 Step 3: Create player profile
-Response: {"id":"...","user_id":"...","full_name":"John Doe","position":"Forward",...}
-✅ Profile created
-
-📖 Step 4: Get profile
-Response: {"id":"...","user_id":"...","full_name":"John Doe",...}
-✅ Profile retrieved
-
-✏️ Step 5: Update profile
-Response: {"id":"...","user_id":"...","full_name":"John Doe","position":"Midfielder",...}
-✅ Profile updated
-
-🔒 Step 6: Test authentication
-Response: {"id":"...","user_id":"...","full_name":"John Doe",...}
-✅ Authentication working
-
-🎉 All tests passed!
+```bash
+make migrate-auth
+make migrate-profile
+make migrate-media
 ```
 
-## Step 6: Manual API Testing
+### 4. Start Application Services
 
-You can also test the APIs manually using curl:
+Build and start all services:
 
-### Register a New User
+```bash
+docker-compose up --build auth-service profile-service media-service
+```
+
+Or start individually:
+
+```bash
+docker-compose up --build auth-service
+docker-compose up --build profile-service
+docker-compose up --build media-service
+```
+
+### 5. Verify Services are Running
+
+Check service health:
+
+```bash
+# Auth Service (Port 8080)
+curl http://localhost:8080/health
+
+# Profile Service (Port 8081)
+curl http://localhost:8081/health
+
+# Media Service (Port 8082)
+curl http://localhost:8082/health
+```
+
+Expected response: `{"status":"healthy","service":"<service-name>"}`
+
+## Testing the Services
+
+### Option 1: Using Test Scripts
+
+We provide automated test scripts for each service:
+
+```bash
+# Test Auth Service
+./scripts/test-api.sh
+
+# Test Media Service
+./scripts/test-media-api.sh
+```
+
+### Option 2: Manual Testing with cURL
+
+#### Auth Service Tests
+
+**1. Register a new user:**
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/auth/register \
   -H "Content-Type: application/json" \
   -d '{
-    "email": "test@example.com",
-    "password": "SecurePass123!",
-    "role": "player"
-  }' | jq
+    "email": "player@test.com",
+    "password": "Test123!@#",
+    "full_name": "John Doe"
+  }'
 ```
 
-### Login
+**2. Login:**
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{
-    "email": "test@example.com",
-    "password": "SecurePass123!"
-  }' | jq
+    "email": "player@test.com",
+    "password": "Test123!@#"
+  }'
 ```
 
-**Save the token from the response** for subsequent requests.
+Save the `access_token` from the response.
 
-### Create Profile (Replace YOUR_TOKEN_HERE)
+**3. Get current user info:**
+
+```bash
+curl -X GET http://localhost:8080/api/v1/auth/me \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+#### Profile Service Tests
+
+**1. Create a profile:**
 
 ```bash
 curl -X POST http://localhost:8081/api/v1/profiles \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_TOKEN_HERE" \
   -d '{
-    "full_name": "Test Player",
-    "date_of_birth": "2000-01-15",
-    "position": "Forward",
-    "height": 180,
-    "weight": 75,
-    "preferred_foot": "right"
-  }' | jq
+    "bio": "Professional football player",
+    "location": "London, UK",
+    "profile_type": "player"
+  }'
 ```
 
-### Get Profile (Replace YOUR_TOKEN_HERE)
+**2. Get my profile:**
 
 ```bash
 curl -X GET http://localhost:8081/api/v1/profiles/me \
-  -H "Authorization: Bearer YOUR_TOKEN_HERE" | jq
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
-### Update Profile (Replace YOUR_TOKEN_HERE)
+**3. Update profile:**
 
 ```bash
-curl -X PUT http://localhost:8081/api/v1/profiles/me \
+curl -X PUT http://localhost:8081/api/v1/profiles/PROFILE_ID \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_TOKEN_HERE" \
   -d '{
-    "position": "Midfielder",
-    "bio": "Experienced midfielder with strong passing skills"
-  }' | jq
+    "bio": "Updated bio",
+    "location": "Manchester, UK"
+  }'
 ```
 
-## Step 7: Verify Database Data
-
-Check the data directly in PostgreSQL:
+**4. Create player details:**
 
 ```bash
-# View registered users
-docker exec -it scouttalent-postgres psql -U postgres -d auth_db -c "SELECT id, email, role, created_at FROM users;"
+curl -X POST http://localhost:8081/api/v1/profiles/PROFILE_ID/player-details \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "position": "Forward",
+    "preferred_foot": "Right",
+    "height": 180,
+    "weight": 75,
+    "date_of_birth": "2000-01-15"
+  }'
+```
 
-# View profiles
-docker exec -it scouttalent-postgres psql -U postgres -d profile_db -c "SELECT id, user_id, full_name, position, completion_score FROM profiles;"
+#### Media Service Tests
+
+**1. Initiate video upload:**
+
+```bash
+curl -X POST http://localhost:8082/api/v1/videos/upload \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "My Skills Video",
+    "description": "Showcasing my football skills",
+    "file_name": "skills.mp4",
+    "file_size": 52428800,
+    "mime_type": "video/mp4"
+  }'
+```
+
+Save the `video_id` and `upload_id` from the response.
+
+**2. Update upload progress:**
+
+```bash
+curl -X PATCH http://localhost:8082/api/v1/videos/upload/UPLOAD_ID?progress=50 \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+**3. Complete upload:**
+
+```bash
+curl -X POST http://localhost:8082/api/v1/videos/VIDEO_ID/complete \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+**4. Get video details:**
+
+```bash
+curl -X GET http://localhost:8082/api/v1/videos/VIDEO_ID \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+**5. List profile videos:**
+
+```bash
+curl -X GET http://localhost:8082/api/v1/videos/profile/PROFILE_ID?limit=10&offset=0 \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+**6. Update video metadata:**
+
+```bash
+curl -X PUT http://localhost:8082/api/v1/videos/VIDEO_ID \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Updated Title",
+    "description": "Updated description"
+  }'
+```
+
+**7. Delete video:**
+
+```bash
+curl -X DELETE http://localhost:8082/api/v1/videos/VIDEO_ID \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+## Viewing Logs
+
+View logs for specific services:
+
+```bash
+# All services
+docker-compose logs -f
+
+# Specific service
+docker-compose logs -f auth-service
+docker-compose logs -f profile-service
+docker-compose logs -f media-service
+
+# Infrastructure
+docker-compose logs -f postgres
+docker-compose logs -f redis
+docker-compose logs -f nats
+```
+
+## Database Access
+
+Connect to PostgreSQL:
+
+```bash
+docker exec -it scouttalent-postgres psql -U scout -d auth_db
+docker exec -it scouttalent-postgres psql -U scout -d profile_db
+docker exec -it scouttalent-postgres psql -U scout -d media_db
+```
+
+Useful SQL queries:
+
+```sql
+-- List all users
+SELECT id, email, full_name, created_at FROM users;
+
+-- List all profiles
+SELECT id, user_id, bio, profile_type, created_at FROM profiles;
+
+-- List all videos
+SELECT id, profile_id, title, status, created_at FROM videos;
+```
+
+## Redis Access
+
+Connect to Redis:
+
+```bash
+docker exec -it scouttalent-redis redis-cli
+```
+
+Useful Redis commands:
+
+```redis
+# List all keys
+KEYS *
+
+# Get a specific key
+GET key_name
+
+# Monitor all commands
+MONITOR
+```
+
+## NATS Access
+
+Access NATS monitoring UI:
+
+```
+http://localhost:8222
 ```
 
 ## Troubleshooting
 
-### Issue: "Connection refused" errors
+### Services Won't Start
 
-**Solution:** Ensure Docker services are running:
-```bash
-docker-compose ps
-docker-compose logs postgres
-```
+1. Check if ports are already in use:
+   ```bash
+   lsof -i :8080  # Auth service
+   lsof -i :8081  # Profile service
+   lsof -i :8082  # Media service
+   lsof -i :5432  # PostgreSQL
+   lsof -i :6379  # Redis
+   lsof -i :4222  # NATS
+   ```
 
-### Issue: "Database does not exist"
+2. Check Docker logs:
+   ```bash
+   docker-compose logs
+   ```
 
-**Solution:** Run migrations:
-```bash
-make migrate-up-auth
-make migrate-up-profile
-```
+3. Rebuild services:
+   ```bash
+   docker-compose down
+   docker-compose up --build
+   ```
 
-### Issue: "Port already in use"
+### Database Connection Issues
 
-**Solution:** Check if another service is using ports 8080 or 8081:
-```bash
-# macOS/Linux
-lsof -i :8080
-lsof -i :8081
+1. Ensure PostgreSQL is healthy:
+   ```bash
+   docker-compose ps postgres
+   ```
 
-# Windows
-netstat -ano | findstr :8080
-netstat -ano | findstr :8081
-```
+2. Check database exists:
+   ```bash
+   docker exec -it scouttalent-postgres psql -U scout -c "\l"
+   ```
 
-Kill the conflicting process or change the port in the service configuration.
+3. Verify connection string in docker-compose.yml
 
-### Issue: "Invalid token" errors
+### Migration Errors
 
-**Solution:** Ensure you're using a fresh token from the login response. Tokens expire after 24 hours.
+1. Check migration status:
+   ```bash
+   migrate -path services/auth-service/migrations \
+     -database "postgres://scout:scoutpass@localhost:5432/auth_db?sslmode=disable" \
+     version
+   ```
 
-### Issue: Migration fails with "relation already exists"
+2. Force migration version (if stuck):
+   ```bash
+   migrate -path services/auth-service/migrations \
+     -database "postgres://scout:scoutpass@localhost:5432/auth_db?sslmode=disable" \
+     force VERSION_NUMBER
+   ```
 
-**Solution:** Reset the database:
-```bash
-make migrate-down-auth
-make migrate-down-profile
-make migrate-up-auth
-make migrate-up-profile
-```
+### JWT Token Issues
 
-## Stopping the Services
+1. Ensure JWT_SECRET is set correctly in docker-compose.yml
+2. Token expires after 15 minutes - get a new one by logging in again
+3. Check token format: `Bearer <token>`
 
-### Stop the Go services
-Press `Ctrl+C` in each terminal running the services.
+## Stopping Services
 
-### Stop Docker containers
+Stop all services:
+
 ```bash
 docker-compose down
 ```
 
-### Stop and remove all data (clean slate)
+Stop and remove volumes (clean slate):
+
 ```bash
 docker-compose down -v
 ```
 
 ## Next Steps
 
-Once all tests pass successfully:
+After successfully testing locally:
 
-1. ✅ **Auth Service** - Fully tested and working
-2. ✅ **Profile Service** - Fully tested and working
-3. 🚧 **Media Service** - Ready to build next (video uploads, AI moderation)
+1. **Configure Azure Blob Storage** for Media Service:
+   - Create Azure Storage Account
+   - Set `AZURE_STORAGE_ACCOUNT` and `AZURE_STORAGE_KEY` environment variables
 
-## Test Results Checklist
+2. **Set up CI/CD Pipeline** (see `docs/04-CICD-PIPELINE.md`)
 
-Before moving to the next service, verify:
+3. **Deploy to Kubernetes** (see `docs/03-KUBERNETES-ARCHITECTURE.md`)
 
-- [ ] Docker containers are running (postgres, redis, nats)
-- [ ] Database migrations applied successfully
-- [ ] Auth Service starts without errors on port 8080
-- [ ] Profile Service starts without errors on port 8081
-- [ ] User registration works
-- [ ] User login returns valid JWT token
-- [ ] Profile creation works with authentication
-- [ ] Profile retrieval works
-- [ ] Profile update works
-- [ ] Protected endpoints reject requests without valid tokens
-- [ ] Automated test script passes all checks
+4. **Implement remaining services**:
+   - AI Moderation Worker
+   - Discovery Service
+   - Notification Service
+   - Analytics Service
+
+## Useful Commands
+
+```bash
+# Build all services
+make build
+
+# Run all tests
+make test
+
+# Run linters
+make lint
+
+# Clean up
+make clean
+
+# View all available commands
+make help
+```
 
 ## Support
 
-If you encounter any issues not covered in this guide:
-
-1. Check service logs in the terminal windows
-2. Check Docker logs: `docker-compose logs -f`
-3. Verify environment variables in `.env` files (if any)
-4. Review the code in `services/auth-service/` and `services/profile-service/`
-
----
-
-**Ready to test?** Follow the steps above and report back with your results. Once everything passes, we'll move on to building the Media Service! 🚀
+For issues or questions:
+- Check documentation in `docs/` directory
+- Review service-specific README files
+- Check GitHub Issues: https://github.com/Olixc/scouttalent-platform/issues

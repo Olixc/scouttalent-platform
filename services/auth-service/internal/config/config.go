@@ -13,7 +13,7 @@ type Config struct {
 	ServerAddress string
 	Database      database.Config
 	Redis         RedisConfig
-	JWT           auth.TokenConfig
+	JWT           auth.JWTConfig
 }
 
 type RedisConfig struct {
@@ -24,29 +24,25 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		ServerAddress: getEnv("SERVER_ADDRESS", ":8080"),
 		Database: database.Config{
-			DSN:             getEnv("DATABASE_URL", ""),
-			MaxOpenConns:    25,
-			MaxIdleConns:    5,
-			ConnMaxLifetime: 1 * time.Hour,
-			ConnMaxIdleTime: 30 * time.Minute,
+			URL:             getEnv("DATABASE_URL", ""),
+			MaxConns:        25,
+			MinConns:        5,
+			MaxConnLifetime: "1h",
+			MaxConnIdleTime: "30m",
 		},
 		Redis: RedisConfig{
 			URL: getEnv("REDIS_URL", "redis://localhost:6379"),
 		},
-		JWT: auth.TokenConfig{
-			AccessTokenDuration:  15 * time.Minute,
-			RefreshTokenDuration: 7 * 24 * time.Hour,
-			Issuer:               "scouttalent.com",
-			Audience:             []string{"api.scouttalent.com"},
-			SecretKey:            getEnv("JWT_SECRET", ""),
+		JWT: auth.JWTConfig{
+			Secret: getEnv("JWT_SECRET", ""),
 		},
 	}
 
-	if cfg.Database.DSN == "" {
+	if cfg.Database.URL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
 	}
 
-	if cfg.JWT.SecretKey == "" {
+	if cfg.JWT.Secret == "" {
 		return nil, fmt.Errorf("JWT_SECRET is required")
 	}
 
