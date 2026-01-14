@@ -9,11 +9,7 @@ import (
 )
 
 // AuthMiddleware validates JWT tokens
-func AuthMiddleware(config auth.JWTConfig) gin.HandlerFunc {
-	tokenConfig := auth.TokenConfig{
-		SecretKey: config.Secret,
-	}
-
+func AuthMiddleware(config auth.TokenConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
@@ -29,7 +25,7 @@ func AuthMiddleware(config auth.JWTConfig) gin.HandlerFunc {
 			return
 		}
 
-		claims, err := auth.ValidateToken(parts[1], tokenConfig)
+		claims, err := auth.ValidateToken(parts[1], config)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 			c.Abort()

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/scouttalent/pkg/auth"
 	"github.com/scouttalent/pkg/database"
@@ -13,7 +14,7 @@ type Config struct {
 	ServerAddress string
 	Database      database.Config
 	NATS          messaging.NATSConfig
-	JWT           auth.JWTConfig
+	JWT           auth.TokenConfig
 }
 
 func Load() (*Config, error) {
@@ -29,8 +30,12 @@ func Load() (*Config, error) {
 		NATS: messaging.NATSConfig{
 			URL: getEnv("NATS_URL", "nats://localhost:4222"),
 		},
-		JWT: auth.JWTConfig{
-			Secret: getEnv("JWT_SECRET", ""),
+		JWT: auth.TokenConfig{
+			SecretKey:            getEnv("JWT_SECRET", ""),
+			AccessTokenDuration:  15 * time.Minute,
+			RefreshTokenDuration: 7 * 24 * time.Hour,
+			Issuer:               "scouttalent.com",
+			Audience:             []string{"api.scouttalent.com"},
 		},
 	}
 
@@ -38,7 +43,7 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("DATABASE_URL is required")
 	}
 
-	if cfg.JWT.Secret == "" {
+	if cfg.JWT.SecretKey == "" {
 		return nil, fmt.Errorf("JWT_SECRET is required")
 	}
 
